@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Private Downloader</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Private Video Downloader</h1>
+        <p>Paste a YouTube or Instagram Shorts URL below.</p>
+        <form id="download-form">
+            <input type="url" id="video-url" placeholder="https://www.youtube.com/watch?v=..." required>
+            <button type="submit">Download</button>
+        </form>
+        <div id="status">
+            <div id="loader" class="loader" style="display: none;"></div>
+            <p id="message"></p>
+            <div id="download-link-container"></div>
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>

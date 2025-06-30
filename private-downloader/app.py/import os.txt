@@ -1,0 +1,113 @@
+import os
+import subprocess
+import uuid
+from flask import Flask, request, jsonify, render_template, send_from_directory
+from flask_httpauth import HTTPBasicAuth
+from dotenv import load_dotenv
+
+# --- INITIAL SETUP ---
+
+# Load the secret variables from the .env file
+load_dotenv()
+
+# Initialize the Flask web application
+app = Flask(__name__)
+# Initialize the authentication handler
+auth = HTTPBasicAuth()
+
+
+# --- SECURITY: USER AUTHENTICATION ---
+
+# Create a dictionary of allowed users from our secret .env file
+# This is a simple but effective way to password-protect the entire site.
+users = {
+    os.environ.get("DOWNLOADER_USER"): os.environ.get("DOWNLOADER_PASSWORD")
+}
+
+@auth.verify_password
+def verify_password(username, password):
+    """This function is called by Flask-HTTPAuth to check credentials."""
+    if username in users and users[username] == password:
+        return username
+
+# --- CONFIGURATION ---
+
+# Define the directory where downloaded files will be stored inside the container
+DOWNLOADS_DIR = os.path.join(os.getcwd(), "downloads")
+# Create the directory if it doesn't exist
+if not os.path.exists(DOWNLOADS_DIR):
+    os.makedirs(DOWNLOADS_DIR)
+
+
+# --- WEB PAGE ROUTES ---
+
+@app.route('/')
+@auth.login_required # This decorator locks the page, requiring login.
+def index():
+    """Serves the main web page (index.html)."""
+    return render_template('index.html')
+
+@app.route('/download', methods=['POST'])
+@auth.login_required # Also protect this API endpoint
+def download_video():
+    """
+    This is the API endpoint that the frontend JavaScript calls.
+    It receives the URL and triggers the download process.
+    """
+    data = request.get_json()
+    url = data.get('url')
+
+    if not url:
+        return jsonify({"error": "URL is required."}), 400
+
+    # SECURITY: Basic check to ensure the URL is from an expected service
+    if not ("youtube.com" in url or "youtu.be" in url or "instagram.com" in url):
+        return jsonify({"error": "Invalid URL. Only YouTube and Instagram are supported."}), 400
+
+    try:
+        # Create a unique filename to prevent files from overwriting each other
+        unique_id = str(uuid.uuid4())
+        # The template for yt-dlp to name the file
+        output_template = os.path.join(DOWNLOADS_DIR, f"{unique_id}.%(ext)s")
+
+        # The command that will be executed in the server's terminal
+        # It calls the powerful 'yt-dlp' tool.
+        # -f 'best...': Tries to get the best pre-combined MP4 file for speed.
+        command = [
+            'yt-dlp',
+            '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            '--output', output_template,
+            url
+        ]
+        
+        # Run the command. check=True will raise an error if yt-dlp fails.
+        subprocess.run(command, check=True, capture_output=True, text=True)
+
+        # Find the full name of the file that was just downloaded
+        downloaded_file = next((f for f in os.listdir(DOWNLOADS_DIR) if f.startswith(unique_id)), None)
+        
+        if not downloaded_file:
+             raise FileNotFoundError("Downloaded file not found.")
+
+        # If successful, send back a success message and the link to the file
+        return jsonify({
+            "success": True,
+            "download_url": f"/files/{downloaded_file}"
+        })
+
+    except subprocess.CalledProcessError as e:
+        # If yt-dlp fails, log the error for debugging but give a generic message.
+        print(f"yt-dlp error: {e.stderr}")
+        return jsonify({"error": "Failed to download video. URL may be invalid or private."}), 500
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        return jsonify({"error": "An internal server error occurred."}), 500
+
+
+@app.route('/files/<path:filename>')
+@auth.login_required # Also protect the file access
+def serve_file(filename):
+    """This route lets the user download the video from the server."""
+    # SECURITY: send_from_directory prevents users from accessing files
+    # outside the designated DOWNLOADS_DIR (Path Traversal attack).
+    return send_from_directory(DOWNLOADS_DIR, filename, as_attachment=True)
